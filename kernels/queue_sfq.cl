@@ -59,11 +59,11 @@
     /*SYNCTHREADS;\*/
 /*}*/
 
-inline void WAIT(volatile uint32_t * bah){
-    for(int i=0; i<WORK; i++){
-        *bah *= i + i; 
-    }
-}
+// inline void WAIT(volatile uint32_t * bah){
+//     for(int i=0; i<WORK; i++){
+//         *bah *= i + i; 
+//     }
+// }
 
 typedef struct my_queue
 {

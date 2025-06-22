@@ -1,4 +1,5 @@
 #include "barrier.h"
+#include "tzqueue.h"
 
 int tz_enqueue_block(__global volatile tz_queue_t * t, uint32_t newnode){
     while(1){
