@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include "kernels/lcrqueue32_host.h"
 
 #define __CL_ENABLE_EXTENSIONS
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
@@ -25,6 +26,7 @@ int main (int argc, char **argv) {
         return 1;
     }
     std::string src(std::istreambuf_iterator<char>(srcFile), (std::istreambuf_iterator<char>()));
+
 
     // Get platforms
     cl_uint num_platforms;
@@ -136,10 +138,15 @@ int main (int argc, char **argv) {
     }
     else if (dispatchContent.find("#include \"queue_lcrq32.cl\"") != std::string::npos && 
              dispatchContent.find("// #include \"queue_lcrq32.cl\"") == std::string::npos) {
-        buildOpts += " -DUSE_LCRQ_QUEUE";
+        buildOpts += " -DUSE_LCRQ_QUEUE ";
         queueType = "LCRQ";
-        queueSize = queuelen * 10 * sizeof(uint32_t);  // LCRQ queue sizing (estimate)
-        queueInitData.resize(queuelen * 10, 0);
+        // For the reduced test size:
+        // CRQ_LEN = 256, NUM_BASE_CRQS = 4
+        // const size_t crq32_size = 64 + (256 * 16) + (1500 * 4) + 4; // ~10KB per crq32
+        // const size_t lcrq32_size = 64 + (4 * crq32_size); // ~40KB total
+        // queueSize = queuelen * 10 * sizeof(uint32_t);  // LCRQ queue sizing (estimate)
+        queueSize = sizeof(lcrq32_host); 
+        // queueInitData.resize(queuelen * 10, 0);
         // LCRQ specific initialization if needed
     }
     
@@ -188,7 +195,11 @@ int main (int argc, char **argv) {
     // Write data to buffers
     clEnqueueWriteBuffer(queue, input_buf, CL_TRUE, 0, array_size, input_data.data(), 0, NULL, NULL);
     clEnqueueWriteBuffer(queue, barrier_buf, CL_TRUE, 0, barrier_size, barrier_data.data(), 0, NULL, NULL);
+    // clEnqueueWriteBuffer(queue, queue_buf, CL_TRUE, 0, queueSize, queueInitData.data(), 0, NULL, NULL);
+    // Only write initial data for non-LCRQ queues
+if (queueType != "LCRQ") {
     clEnqueueWriteBuffer(queue, queue_buf, CL_TRUE, 0, queueSize, queueInitData.data(), 0, NULL, NULL);
+}
 
     // Create kernel
     cl_kernel kernel = clCreateKernel(program, "generic_queue_copy_test", &err);
@@ -210,6 +221,29 @@ int main (int argc, char **argv) {
 
     std::cout << "Testing " << queueType << " queue with " << global[0] * global[1] << " threads in " 
               << (global[0] * global[1]) / (local[0] * local[1]) << " work-groups" << std::endl;
+
+    // Initialize LCRQ if needed
+if (queueType == "LCRQ") {
+    cl_kernel init_kernel = clCreateKernel(program, "lcrq_init", &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to create init kernel!" << std::endl;
+        return 1;
+    }
+    
+    clSetKernelArg(init_kernel, 0, sizeof(cl_mem), &queue_buf);
+    
+    size_t one = 1;
+    err = clEnqueueNDRangeKernel(queue, init_kernel, 1, NULL, &one, &one, 0, NULL, NULL);
+    if (err != CL_SUCCESS) {
+        std::cerr << "Failed to launch init kernel!" << std::endl;
+        return 1;
+    }
+    
+    clFinish(queue);  // Wait for initialization to complete
+    clReleaseKernel(init_kernel);
+    
+    std::cout << "LCRQ queue initialized successfully" << std::endl;
+}
 
     err = clEnqueueNDRangeKernel(queue, kernel, 2, NULL, global, local, 0, NULL, NULL);
     if (err != CL_SUCCESS) {

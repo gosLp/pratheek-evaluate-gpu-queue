@@ -1,6 +1,6 @@
-#ifndef __OPENCL__
-#define __OPENCL__
-#endif
+// #ifndef __OPENCL__
+// #define __OPENCL__
+// #endif
 
 /*#if defined(cl_khr_int64_base_atomics) //if not, can't use this implementation at all*/
 
@@ -27,12 +27,19 @@ void init_cr_32_queue(volatile __global crq32* q, uint32_t size){
     q->tail.combined = 0; 
     q->next = UINT_MAX;
     q->size = CRQ_LEN;
-    Node32 stamp = {.id = {.safe = 1},
-                  .val = EMPTY};
+    // Node32 stamp = {.id = {.safe = 1},
+    //               .val = EMPTY};a
+    Node32 stamp;
+    stamp.val = EMPTY;
+    SET_SAFE(stamp.id, 1);
     for(int i=0; i<CRQ_LEN; ++i){
-        stamp.id.idx = i;
+        // stamp.id.idx = i;
+        SET_IDX(stamp.id, i);
         q->ring[i].combined = stamp.combined;
     }
+
+    for (int g = 0; g < GROUPS; ++g)
+        q->hazard[g] = 0;  
 }
 uint32_t new_cr_32_queue(volatile __global lcrq32 * lq, uint32_t size){
     /*uint32_t count = VOLATILE_INC(new_count);*/
@@ -84,7 +91,8 @@ uint32_t cr_dequeue32(volatile __global crq32 *q, volatile uint32_t *val){
     volatile __global Node32 * node;
     Id32 closed_t;//boolean
     Node32 current;
-    Node32 replacement = {.val = EMPTY};
+    Node32 replacement;
+    replacement.val = EMPTY;
     
     while(1){
         h = VOLATILE_INC(q->head);
@@ -94,21 +102,22 @@ uint32_t cr_dequeue32(volatile __global crq32 *q, volatile uint32_t *val){
         while(1){
             current.combined = node->combined;
 
-            if(current.id.idx > h) break;//go to end of outer while loop
+            if(GET_IDX(current.id) > h) break;//go to end of outer while loop
             if(current.val != EMPTY){
-                if(current.id.idx == h){//try dequeue
-                    replacement.id.safe = current.id.safe;
-                    replacement.id.idx = h+CRQ_LEN;
+                if(GET_IDX(current.id) == h){//try dequeue
+                    SET_SAFE(replacement.id,GET_SAFE(current.id));
+                    SET_IDX(replacement.id, h+CRQ_LEN);
                     if(VOLATILE_CAS64(node->combined,
                                         current.combined,
                                         replacement.combined) == current.combined){
+                        mem_fence(CLK_GLOBAL_MEM_FENCE); 
                         val[0] = current.val;
                         return 0;
                     }
                 }else{ // mark node unsafe to prevent enqueue
                     replacement.combined = current.combined;
-                    replacement.id.safe = 0;
-                    current.id.idx = h;
+                    SET_SAFE(replacement.id, 0);
+                    current.id.combined = (current.id.combined & 0x80000000) | (h & 0x7FFFFFFF);
                     if(VOLATILE_CAS64(node->combined,
                                         current.combined,
                                         replacement.combined) == current.combined){
@@ -116,8 +125,8 @@ uint32_t cr_dequeue32(volatile __global crq32 *q, volatile uint32_t *val){
                     }
                 }
             }else{ // idx <= h and val is EMPTY, try empty transition
-                replacement.id.safe = current.id.safe;
-                replacement.id.idx = h+CRQ_LEN;
+                SET_SAFE(replacement.id, GET_SAFE(current.id));
+                SET_IDX(replacement.id,  h+CRQ_LEN);
                 if(VOLATILE_CAS64(node->combined,
                             current.combined,
                             replacement.combined) == current.combined){
@@ -127,7 +136,7 @@ uint32_t cr_dequeue32(volatile __global crq32 *q, volatile uint32_t *val){
         }
         //dequeue failed, test empty
         closed_t.combined = q->tail.combined;
-        if(closed_t.t <= h+1){
+        if(GET_T(closed_t) <= h+1){
             fixState32(q);
             return EMPTY;
         }
@@ -140,7 +149,8 @@ uint32_t cr_dequeue32_spinopt(volatile __global crq32 *q, uint32_t *val){
     volatile __global Node32 * node;
     Id32 closed_t;//boolean
     Node32 current;
-    Node32 replacement = {.val = EMPTY};
+    Node32 replacement;
+    replacement.val = EMPTY;
     
     while(1){
         h = VOLATILE_INC(q->head);
@@ -150,11 +160,11 @@ uint32_t cr_dequeue32_spinopt(volatile __global crq32 *q, uint32_t *val){
         while(1){
             current.combined = node->combined;
 
-            if(current.id.idx > h) break;//go to end of outer while loop
+            if(GET_IDX(current.id) > h) break;//go to end of outer while loop
             if(current.val != EMPTY){
-                if(current.id.idx == h){//try dequeue
-                    replacement.id.safe = current.id.safe;
-                    replacement.id.idx = h+CRQ_LEN;
+                if(GET_IDX(current.id) == h){//try dequeue
+                    SET_SAFE(replacement.id, GET_SAFE(current.id));
+                    SET_IDX(replacement.id, h+CRQ_LEN );
                     if(VOLATILE_CAS64(node->combined,
                                         current.combined,
                                         replacement.combined) == current.combined){
@@ -163,8 +173,8 @@ uint32_t cr_dequeue32_spinopt(volatile __global crq32 *q, uint32_t *val){
                     }
                 }else{ // mark node unsafe to prevent enqueue
                     replacement.combined = current.combined;
-                    replacement.id.safe = 0;
-                    current.id.idx = h;
+                    SET_SAFE(replacement.id, 0);
+                    current.id.combined = (current.id.combined & 0x80000000) | (h & 0x7FFFFFFF);
                     if(VOLATILE_CAS64(node->combined,
                                         current.combined,
                                         replacement.combined) == current.combined){
@@ -172,11 +182,11 @@ uint32_t cr_dequeue32_spinopt(volatile __global crq32 *q, uint32_t *val){
                     }
                 }
             }else{ // idx <= h and val is EMPTY, try empty transition
-                replacement.id.safe = current.id.safe;
-                replacement.id.idx = h+CRQ_LEN;
+                SET_SAFE(replacement.id, GET_SAFE(current.id));
+                SET_IDX(replacement.id, h+CRQ_LEN);
                 closed_t.combined = q->tail.combined;
                 uint32_t fail = 0;
-                if(closed_t.t >= h+1){
+                if(GET_T(closed_t) >= h+1){
                     while(fail++ < 500){
                         if((current.val = VOLATILE_READ(node->val)) != EMPTY){
                             /*fprintf(stderr,"alloc avoided!\n");*/
@@ -187,7 +197,7 @@ uint32_t cr_dequeue32_spinopt(volatile __global crq32 *q, uint32_t *val){
                         /*usleep(1);*/
                     }
                 }
-                /*fprintf(stderr,"now destroying performance... t: %lu h: %lu fail: %lu\n", closed_t.t, h, fail);*/
+                /*fprintf(stderr,"now destroying performance... t: %lu h: %lu fail: %lu\n", GET_T(closed_t), h, fail);*/
                 if(VOLATILE_CAS64(node->combined,
                             current.combined,
                             replacement.combined) == current.combined){
@@ -197,7 +207,7 @@ uint32_t cr_dequeue32_spinopt(volatile __global crq32 *q, uint32_t *val){
         }
         //dequeue failed, test empty
         closed_t.combined = q->tail.combined;
-        if(closed_t.t <= h+1){
+        if(GET_T(closed_t) <= h+1){
             fixState32(q);
             return EMPTY;
         }
@@ -209,32 +219,34 @@ uint32_t cr_enqueue32(volatile __global crq32 *q, uint32_t arg){
     volatile __global Node32 * node;
     Id32 closed_t;//boolean
     Node32 current;
-    Node32 replacement = {.val = EMPTY};
+    Node32 replacement;
+    replacement.val = EMPTY;
     uint32_t fail=0;
     while(1){
         closed_t.combined = VOLATILE_INC(q->tail.combined);
-        if(closed_t.closed){
+        if(GET_CLOSED(closed_t)){
             /*fprintf(stderr,"closed:1\n");*/
             return CLOSED;
         }
-        target = GET_TARGET(closed_t.t,q);
-        /*target = closed_t.t;*/
+        target = GET_TARGET(GET_T(closed_t),q);
+        /*target = GET_T(closed_t);*/
         /*target %= CRQ_LEN;*/
         node = &(q->ring[target]);
         current.combined = node->combined;
         if(current.val == EMPTY){//attempt enqueue
-            /*fprintf(stderr, "val: %llu\tt=%llu idx: %llu safe: %llu target: %llu", arg, closed_t.t, current.id.idx, current.id.safe, target);*/
-            replacement.id.idx = closed_t.t;
-            replacement.id.safe = 1;
+            /*fprintf(stderr, "val: %llu\tt=%llu idx: %llu safe: %llu target: %llu", arg, GET_T(closed_t), GET_IDX(current.id), GET_SAFE(current.id), target);*/
+            SET_IDX(replacement.id,  GET_T(closed_t));
+            SET_SAFE(replacement.id, 1);
             replacement.val = arg;
-            if((current.id.idx <= closed_t.t)){
+            if((GET_IDX(current.id) <= GET_T(closed_t))){
                 /*fprintf(stderr, "1 ");*/
-                if(current.id.safe == 1 || q->head <= closed_t.t){
+                if(GET_SAFE(current.id) == 1 || q->head <= GET_T(closed_t)){
                     /*fprintf(stderr, "2 ");*/
                     if(VOLATILE_CAS64(node->combined, 
                                         current.combined, 
                                         replacement.combined) == current.combined){
                         /*fprintf(stderr, "3\n");*/
+                        mem_fence(CLK_GLOBAL_MEM_FENCE);
                         return 0;
                     }
                 }
@@ -242,21 +254,14 @@ uint32_t cr_enqueue32(volatile __global crq32 *q, uint32_t arg){
             /*fprintf(stderr, "\n");*/
         }
         h = VREAD(q->head);
-        if(closed_t.t - h >= CRQ_LEN || (fail++ > 10000)){//starving is a check of fail
+        if(GET_T(closed_t) - h >= CRQ_LEN || (fail++ > 10000)){//starving is a check of fail
             //TODO may need an actual test and set here, not sure
-            q->tail.closed = 1;
-            /*fprintf(stderr,"closed:2 t: %llu h:%llu len: %llu fail: %lu\n",closed_t.t, h, CRQ_LEN, fail);*/
+            SET_CLOSED(q->tail, 1);
+            /*fprintf(stderr,"closed:2 t: %llu h:%llu len: %llu fail: %lu\n",GET_T(closed_t), h, CRQ_LEN, fail);*/
             return CLOSED;
         }
     }
 }
-
-/*lcrq32 * new_lcr_32_queue(uint32_t size){*/
-    /*lcrq32 * q = calloc(sizeof(lcrq32),1);*/
-    /*q->head = new_cr_32_queue(q, CRQ_LEN);*/
-    /*q->tail = q->head;*/
-    /*return q;*/
-/*}*/
 
 
 int lcr_dequeue32(volatile __global lcrq32 * q, volatile  uint32_t *val){
@@ -353,67 +358,3 @@ int lcr_enqueue32(volatile __global lcrq32 *q, uint32_t val){
     /*printf("exiting lcr_enqueue\n");*/
 }
 
-/*kernel void lcr_queue_weak_test(__global volatile barrier_t *b, __global volatile lcrq32 *q, __global volatile int *input, __global volatile int *output, int num_elements)*/
-/*{*/
-    /*const unsigned int tid = (get_local_id(1) * get_local_size(0)) + get_local_id(0);*/
-    /*const unsigned int group = get_group_id(0) + (get_group_id(1) * get_num_groups(0));*/
-    /*const unsigned int groups = get_num_groups(0) * get_num_groups(1);*/
-    /*volatile __local unsigned test;*/
-    /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-    /*if(tid == 0) {*/
-        /*test = atomic_add(&(b->lid1), 0);*/
-    /*}*/
-    /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-    /*if(test != 0) {*/
-        /*return;*/
-    /*}*/
-    /*if(tid == 0) {*/
-        /*atomic_add(&(b->free), 1);*/
-    /*}*/
-    /*unsigned count = 0;*/
-    /*volatile uint32_t item;*/
-    /*for(int i = 1; i <= num_elements; ++i) {*/
-        /*if(tid == 0) {*/
-            /*if(lcr_enqueue32(q, i)) {*/
-                /*break;*/
-            /*}*/
-            /*WAIT(&item);*/
-        /*}*/
-        /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-        /*if(tid == 0) {*/
-            /*if(lcr_dequeue32_spinopt(q, &item)) {*/
-                /*break;*/
-            /*}*/
-            /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-        /*}*/
-        /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-        /*if(tid == 0) {*/
-            /*output[item - 1] = input[item - 1];*/
-            /*WAIT(&item);*/
-            /*count++;*/
-        /*}*/
-        /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-    /*}*/
-    /*barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);*/
-    /*if(tid ==0){*/
-        /*VOLATILE_CAS(b->lid1, 0, VOLATILE_READ(b->free));*/
-        /*VOLATILE_ADD(b->participants, count);*/
-    /*}*/
-    
-/*}*/
-
-/*#else //compatibility stubs for compilation on unsupported devices*/
-/*int lcr_dequeue32(volatile __global void * q, volatile uint32_t *val){*/
-    /**val = 0;*/
-    /*return 0;*/
-/*}*/
-/*int lcr_dequeue32_spinopt(volatile __global void * q, volatile uint32_t *val){*/
-    /**val = 0;*/
-    /*return 0;*/
-/*}*/
-/*int lcr_enqueue32(volatile __global void * q, uint32_t val){*/
-    /*return 0;*/
-/*}*/
-
-
-/*#endif*/

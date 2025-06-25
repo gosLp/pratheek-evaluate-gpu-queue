@@ -7,7 +7,9 @@
 
 #define WARP_ID get_group_id(1)
 #define THREAD_ID
+#ifndef GROUPS
 #define GROUPS get_num_groups(1)
+#endif
 
 #ifndef uint32_t
 typedef unsigned short uint16_t;
