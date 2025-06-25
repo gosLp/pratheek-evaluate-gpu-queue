@@ -249,7 +249,7 @@ int my_dequeue_nb_slot(__global volatile my_queue_t * q, volatile unsigned int *
     return 0;
 }
 
-#include "queue_tz.cl"
-#include "queue_ms.cl"
+// #include "queue_tz.cl"
+// #include "queue_ms.cl"
 /*#include "queue_lcrq.cl"*/
 /*#include "queue_lcrq16.cl"*/
