@@ -2,7 +2,7 @@
 #ifndef __BARRIER_H
 #define __BARRIER_H
 #ifndef FAILSAFE
-#define FAILSAFE 1000
+#define FAILSAFE 10000
 #endif
 
 #define WARP_ID get_group_id(1)

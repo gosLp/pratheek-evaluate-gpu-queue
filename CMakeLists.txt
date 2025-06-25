@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(MSQueueTest)
+project(QueuePerformanceTest)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 14)
@@ -32,3 +32,30 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+# Custom targets for testing different queue types
+add_custom_target(test-sfq
+    COMMAND queue_test sfq
+    DEPENDS queue_test
+    COMMENT "Testing SFQ queue with all patterns"
+)
+
+add_custom_target(test-ms
+    COMMAND queue_test ms
+    DEPENDS queue_test
+    COMMENT "Testing MS queue with all patterns"
+)
+
+add_custom_target(test-tz
+    COMMAND queue_test tz
+    DEPENDS queue_test
+    COMMENT "Testing TZ queue with all patterns"
+)
+
+add_custom_target(test-all
+    COMMAND queue_test sfq
+    COMMAND queue_test ms
+    COMMAND queue_test tz
+    DEPENDS queue_test
+    COMMENT "Testing all queue types"
+)

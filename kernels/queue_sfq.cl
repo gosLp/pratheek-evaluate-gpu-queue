@@ -77,7 +77,7 @@ typedef struct my_queue
     };
     volatile uint32_t slots[MY_QUEUE_LENGTH];
 } my_queue_t;
-typedef my_queue_t tz_queue_t;
+// typedef my_queue_t tz_queue_t;
 
 
 inline int my_enqueue(__global volatile my_queue_t * q,
